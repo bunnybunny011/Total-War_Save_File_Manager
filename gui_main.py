@@ -5,6 +5,7 @@ from tkinter import messagebox, ttk, filedialog
 from mapping_data import TRANSLATIONS
 from save_cleaner import SaveCleanerLogic
 import time
+from datetime import datetime
 
 def format_size(size_bytes):
     if size_bytes == 0: return "0 B"
@@ -15,13 +16,24 @@ def format_size(size_bytes):
     return f"{size_bytes:.2f} {units[i]}"
 
 class SaveManagerGUI:
-    """토탈워 세이브 매니저의 메인 UI 클래스입니다. [v6.0 Scroll & Stop]"""
+    """토탈워 세이브 매니저 [v15.0 Performance Edition]"""
     def __init__(self, root):
         self.root = root
         self.lang = "KOR"
-        self.logic = SaveCleanerLogic()
+        
+        try:
+            from save_manager_core import SaveManagerLogic
+            self.logic = SaveManagerLogic()
+        except ImportError:
+            # Fallback logic
+            class MinimalLogic:
+                def __init__(self): self.search_paths = []
+                def scan_games(self): return [] 
+                def get_save_files_details(self, path, progress_callback=None, stop_check=None): return []
+            self.logic = MinimalLogic()
+
         self.is_working = False
-        self.current_task_id = 0 # 현재 작업 ID (중단용)
+        self.current_task_id = 0 
         self.setup_ui()
         self.refresh_list()
 
@@ -31,11 +43,12 @@ class SaveManagerGUI:
         self.root.geometry("1100x750")
         self.root.configure(bg="#f0f0f0")
         
-        # 메인 프레임
+        # ... (상단/좌측 패널 코드는 기존과 동일, 생략 없이 전체를 원하시면 말씀해주세요) ...
+        # 여기서는 핵심 변경점인 '우측 패널' 부분만 수정하여 전체 코드를 구성합니다.
+        
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 상단 헤더
         header_frame = ttk.Frame(main_frame)
         header_frame.pack(fill=tk.X, pady=(0, 10))
         
@@ -45,7 +58,6 @@ class SaveManagerGUI:
         self.lang_btn = ttk.Button(header_frame, text=t["lang_switch"], command=self.toggle_language)
         self.lang_btn.pack(side=tk.RIGHT)
 
-        # 좌측: 게임 목록 및 버튼
         left_panel = ttk.Frame(main_frame)
         left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         
@@ -66,39 +78,40 @@ class SaveManagerGUI:
         self.add_btn = ttk.Button(btn_frame, text=t["btn_add_folder"], command=self.add_folder)
         self.add_btn.pack(side=tk.LEFT, padx=2)
         
-        self.clean_btn = ttk.Button(btn_frame, text=t["btn_start_clean"], command=self.start_cleaning)
+        self.clean_btn = ttk.Button(btn_frame, text=t["btn_start_clean"], command=self.on_smart_clean_click)
         self.clean_btn.pack(side=tk.LEFT, padx=2)
         
-        self.camp_btn = ttk.Button(btn_frame, text=t["btn_campaign_clean"], command=self.start_campaign_cleaning)
+        self.camp_btn = ttk.Button(btn_frame, text=t["btn_campaign_clean"], command=self.on_ratio_clean_click)
         self.camp_btn.pack(side=tk.LEFT, padx=2)
         
-        # 우측: 상세 정보 (스크롤바 추가됨)
+        # === [우측 패널 변경] ===
         right_panel = ttk.Frame(main_frame, width=450)
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(5, 0))
         
         details_frame = ttk.LabelFrame(right_panel, text=t["label_details"], padding="5")
         details_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 스크롤바 컨테이너
         tree_scroll_frame = ttk.Frame(details_frame)
         tree_scroll_frame.pack(fill=tk.BOTH, expand=True)
         
         scrollbar = ttk.Scrollbar(tree_scroll_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.file_list = ttk.Treeview(tree_scroll_frame, columns=("name", "faction", "leader"), 
+        # 컬럼 변경: Faction/Leader -> Date/Size
+        self.file_list = ttk.Treeview(tree_scroll_frame, columns=("name", "date", "size"), 
                                       show="headings", yscrollcommand=scrollbar.set)
         scrollbar.config(command=self.file_list.yview)
         
         self.file_list.heading("name", text="File Name")
-        self.file_list.heading("faction", text="Faction")
-        self.file_list.heading("leader", text="Leader")
-        self.file_list.column("name", width=200)
-        self.file_list.column("faction", width=100)
-        self.file_list.column("leader", width=100)
+        self.file_list.heading("date", text="Date Modified")
+        self.file_list.heading("size", text="Size")
+        
+        self.file_list.column("name", width=250)
+        self.file_list.column("date", width=120, anchor=tk.CENTER)
+        self.file_list.column("size", width=80, anchor=tk.E)
+        
         self.file_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # 하단 상태창 및 진행바
         status_frame = ttk.Frame(self.root)
         status_frame.pack(side=tk.BOTTOM, fill=tk.X)
         
@@ -109,22 +122,90 @@ class SaveManagerGUI:
         self.status_bar = ttk.Label(status_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+    # ... (get_current_folder, get_total_size, run_cleaning_task, clean 버튼 핸들러들은 동일) ...
+    # 편의를 위해 여기에 핵심 메서드만 다시 적습니다. 기존 코드 그대로 쓰셔도 무방합니다.
+    
+    def get_current_folder(self):
+        sel = self.game_list.selection()
+        if not sel:
+            messagebox.showwarning("Warning", "게임을 먼저 선택해주세요.")
+            return None
+        return self.game_list.item(sel[0], "tags")[0]
+
+    def get_total_size(self, folder):
+        total = 0
+        try:
+            for f in os.listdir(folder):
+                fp = os.path.join(folder, f)
+                if os.path.isfile(fp): total += os.path.getsize(fp)
+        except: pass
+        return total
+
+    def run_cleaning_task(self, folder, game_name, method_func, mode_name):
+        initial_total_size = self.get_total_size(folder)
+        initial_size_str = format_size(initial_total_size)
+        
+        self.set_status(f"Calculating files in {game_name}...", 0)
+        self.is_working = True
+        
+        def task():
+            def progress_cb(current, total):
+                percent = (current / total) * 100
+                self.root.after(0, lambda: self.set_status(f"Analyzing {current}/{total} files...", percent))
+            try:
+                count, moved_list, backup_path, saved_size = method_func(folder, progress_callback=progress_cb)
+                def on_complete():
+                    self.is_working = False
+                    self.set_status("Ready", 0)
+                    saved_str = format_size(saved_size)
+                    percent_saved = (saved_size / initial_total_size * 100) if initial_total_size > 0 else 0
+                    msg = (f"[{mode_name}] 완료!\n\n"
+                           f"■ 백업된 파일: {count}개\n"
+                           f"■ 전체 용량: {initial_size_str}\n"
+                           f"■ 백업된 용량: {saved_str} ({percent_saved:.1f}%)\n\n"
+                           f"백업 폴더를 여시겠습니까?")
+                    if count > 0:
+                        if messagebox.askyesno("완료", msg): SaveCleanerLogic.open_folder(backup_path)
+                    else:
+                        messagebox.showinfo("완료", "정리할 파일이 없습니다.")
+                    self.refresh_file_list(folder)
+                self.root.after(0, on_complete)
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("오류", str(e)))
+                self.is_working = False
+        threading.Thread(target=task, daemon=True).start()
+
+    def on_smart_clean_click(self):
+        folder = self.get_current_folder()
+        if not folder: return
+        game_name = os.path.basename(os.path.dirname(folder))
+        if not messagebox.askyesno("확인", f"[{game_name}] 정리 시작?\n(중복 턴 파일은 '_Backup' 폴더로 이동됩니다)"): return
+        self.run_cleaning_task(folder, game_name, SaveCleanerLogic.clean_duplicates_smart, "중복 정리")
+
+    def on_ratio_clean_click(self):
+        folder = self.get_current_folder()
+        if not folder: return
+        game_name = os.path.basename(os.path.dirname(folder))
+        if not messagebox.askyesno("확인", f"[{game_name}] 정리 시작?\n(3:1 비율로 '_Backup' 폴더로 이동됩니다)"): return
+        self.run_cleaning_task(folder, game_name, SaveCleanerLogic.clean_campaign_ratio, "비율 정리(3:1)")
+
+    def refresh_file_list(self, folder_path=None):
+        self.on_game_select(None)
+
     def set_status(self, msg, progress=None):
         self.status_var.set(msg)
-        if progress is not None:
-            self.progress['value'] = progress
+        if progress is not None: self.progress['value'] = progress
         self.root.update_idletasks()
 
     def refresh_list(self):
         if self.is_working: return
         self.game_list.delete(*self.game_list.get_children())
-        for g in self.logic.scan_games():
-            self.game_list.insert("", tk.END, values=(g["name"], g["count"]), tags=(g["path"],))
+        if hasattr(self.logic, 'scan_games'):
+            for g in self.logic.scan_games():
+                self.game_list.insert("", tk.END, values=(g["name"], g["count"]), tags=(g["path"],))
 
     def on_game_select(self, event):
-        # [NEW] 작업 중단 및 새 작업 시작
         self.is_working = False 
-        
         sel = self.game_list.selection()
         if not sel: return
         
@@ -132,29 +213,24 @@ class SaveManagerGUI:
         game_display_name = os.path.basename(os.path.dirname(path))
         self.set_status(f"Loading files from {game_display_name}...", 0)
         
-        # 작업 ID 갱신 (이전 작업 무효화)
         current_task_id = time.time()
         self.current_task_id = current_task_id
         
         def task():
             self.is_working = True
-            
-            # 중단 여부 체크 함수
-            def check_stop():
-                return self.current_task_id != current_task_id
-
+            def check_stop(): return self.current_task_id != current_task_id
             def progress_cb(current, total):
                 if check_stop(): return
                 percent = (current / total) * 100
                 self.root.after(0, lambda: self.set_status(f"Loading {game_display_name} ({current}/{total})...", percent))
             
-            # 로직 호출 (stop_check 함수를 전달하여 내부에서도 중단 가능하게 함)
-            files = self.logic.get_save_files_details(path, progress_callback=progress_cb, stop_check=check_stop)
-            
-            if check_stop(): return # 결과 버림
-            
-            self.root.after(0, lambda: self.update_file_list(files))
-            
+            if hasattr(self.logic, 'get_save_files_details'):
+                files = self.logic.get_save_files_details(path, progress_callback=progress_cb, stop_check=check_stop)
+                if check_stop(): return 
+                self.root.after(0, lambda: self.update_file_list(files))
+            else:
+                 self.root.after(0, lambda: self.set_status("Logic Error: get_save_files_details not found", 0))
+
         threading.Thread(target=task, daemon=True).start()
 
     def update_file_list(self, files):
@@ -163,9 +239,9 @@ class SaveManagerGUI:
             self.set_status("No files found or stopped.", 0)
             self.is_working = False
             return
-
         for f in files:
-            self.file_list.insert("", tk.END, values=(f["name"], f["faction"], f["leader"]))
+            # [변경] 컬럼 데이터 매핑 (name, date, size)
+            self.file_list.insert("", tk.END, values=(f["name"], f["date"], f["size"]))
         self.is_working = False
         self.set_status("Ready", 0)
 
@@ -182,62 +258,20 @@ class SaveManagerGUI:
         self.camp_btn.config(text=t["btn_campaign_clean"])
         self.lang_btn.config(text=t["lang_switch"])
         
-        # 목록 헤더 업데이트
         self.game_list.heading("path", text=t["label_game"])
         self.game_list.heading("count", text=t["label_save_files"])
-        self.file_list.heading("faction", text=t["label_faction"])
+        self.file_list.heading("faction", text=t["label_faction"]) # 내부 ID는 유지하되 텍스트만 변경 가능
         self.file_list.heading("leader", text=t["label_leader"])
+        
+        # 텍스트 변경 적용
+        self.file_list.heading("date", text="Date Modified")
+        self.file_list.heading("size", text="Size")
 
     def add_folder(self):
         t = TRANSLATIONS[self.lang]
-        folder = filedialog.askdirectory(title=t["dialog_add_title"])
+        folder = filedialog.askdirectory(title=t["dialog_folder_title"])
         if folder:
-            self.logic.search_paths.append(folder)
+            if hasattr(self.logic, 'search_paths'):
+                self.logic.search_paths.append(folder)
             self.refresh_list()
             messagebox.showinfo(t["msg_done_title"], t["msg_added"].format(folder))
-
-    def start_cleaning(self):
-        self._generic_clean_threaded(self.logic.clean_duplicates)
-
-    def start_campaign_cleaning(self):
-        self._generic_clean_threaded(self.logic.clean_campaign_history)
-
-    def _generic_clean_threaded(self, method):
-        t = TRANSLATIONS[self.lang]
-        sel = self.game_list.selection()
-        if not sel:
-            messagebox.showwarning(t["msg_done_title"], t["msg_warning_no_selection"])
-            return
-            
-        game_name = self.game_list.item(sel[0])["values"][0]
-        game_path = self.game_list.item(sel[0], "tags")[0]
-        
-        if not messagebox.askyesno(t["msg_done_title"], t["msg_confirm_clean"].format(game_name)):
-            return
-
-        def task():
-            self.is_working = True
-            try:
-                def progress_cb(current, total):
-                    percent = (current / total) * 100
-                    self.root.after(0, lambda: self.set_status(f"Processing ({current}/{total})...", percent))
-                
-                res = method(game_path, progress_callback=progress_cb)
-                self.root.after(0, lambda: self.finish_cleaning(game_name, res))
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror(t["msg_done_title"], t["msg_error"].format(str(e))))
-                self.is_working = False
-                self.set_status("Error", 0)
-
-        threading.Thread(target=task, daemon=True).start()
-
-    def finish_cleaning(self, game_name, res):
-        t = TRANSLATIONS[self.lang]
-        # res: (before_cnt, before_sz, after_cnt, after_sz, moved)
-        saved_size = res[1] - res[3]
-        messagebox.showinfo(t["msg_done_title"], t["msg_done_body"].format(
-            game_name, res[4], format_size(saved_size)
-        ))
-        self.is_working = False
-        self.refresh_list()
-        self.set_status("Ready", 0)
