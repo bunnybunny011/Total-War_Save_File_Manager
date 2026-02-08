@@ -20,6 +20,12 @@
 - **📊 직관적인 정보**: 팩션/리더 이름 대신 **수정 날짜**와 **파일 크기**를 표시하여 정확한 식별 가능.
 - **📂 캠페인 비율 정리**: 특정 캠페인 파일들을 3:1 비율(4개 중 1개만 유지)로 솎아내는 기능 지원.
 
+## 📸 ScreenShot
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/6f7ce516-ca4a-4652-9dfb-602bfbf0c69a"  width="600" alt="Total War Save Manager Screenshot" />
+</p>
+
 ## 🚀 시작하기
 
 ### 유저용 (실행 파일)
